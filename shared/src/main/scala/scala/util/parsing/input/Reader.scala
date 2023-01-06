@@ -13,21 +13,9 @@
 package scala
 package util.parsing.input
 
-
 /** An interface for streams of values that have positions.
  */
 abstract class Reader[+T] {
-
-  /** If this is a reader over character sequences, the underlying char sequence.
-   *  If not, throws a `NoSuchMethodError` exception.
-   *
-   *  @throws [[java.lang.NoSuchMethodError]] if this not a char sequence reader.
-   */
-  def source: java.lang.CharSequence =
-    throw new NoSuchMethodError("not a char sequence reader")
-
-  def offset: Int =
-    throw new NoSuchMethodError("not a char sequence reader")
 
    /** Returns the first element of the reader
     */
@@ -58,4 +46,15 @@ abstract class Reader[+T] {
   /** `true` iff there are no more elements in this reader.
    */
   def atEnd: Boolean
+}
+
+class CharOffsetReader(val source: CharSequence, val offset: Int) extends Reader[Char] {
+  def this(s: CharSequence) = this(s, 0)
+
+  override def first = source.charAt(offset)
+  override def rest = new CharOffsetReader(source, offset+1)
+  override def atEnd = offset == source.length
+  // override def charAt(i: Int): Char = source.charAt(i)
+  def subSequence: CharSequence = new SubSequence(source, offset)
+  def subSequence(length: Int): CharSequence = new SubSequence(source, offset, length)
 }

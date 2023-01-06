@@ -11,14 +11,14 @@
  */
 
 package scala
-package util.parsing.combinator
+package util.parsing.input
 
 // A shallow wrapper over another CharSequence (usually a String)
 //
 // See SI-7710: in jdk7u6 String.subSequence stopped sharing the char array of the original
 // string and began copying it.
 // RegexParsers calls subSequence twice per input character: that's a lot of array copying!
-private[combinator] class SubSequence(s: CharSequence, start: Int, val length: Int) extends CharSequence {
+private[input] class SubSequence(s: CharSequence, start: Int, val length: Int) extends CharSequence {
   def this(s: CharSequence, start: Int) = this(s, start, s.length - start)
 
   def charAt(i: Int) =

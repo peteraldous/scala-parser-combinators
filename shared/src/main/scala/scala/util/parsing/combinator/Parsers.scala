@@ -245,9 +245,7 @@ trait Parsers {
       case Some(parser) => {
         skipParser.withValue(None) {
           parser(in) match {
-            case Success(_,next) => {
-              next
-            }
+            case Success(_,next) => next
             // A parser whose purpose is to skip shouldn't fail; it should just not skip stuff
             case _ => in
           }

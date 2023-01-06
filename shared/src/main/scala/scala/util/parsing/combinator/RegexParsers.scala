@@ -59,63 +59,38 @@ trait RegexParsers extends Parsers {
 
   type Elem = Char
 
-  protected val whiteSpace = """\s+""".r
-
-  def skipWhitespace = whiteSpace.toString.length > 0
-
-  /** Method called to handle whitespace before parsers.
-   *
-   *  It checks `skipWhitespace` and, if true, skips anything
-   *  matching `whiteSpace` starting from the current offset.
-   *
-   *  @param source  The input being parsed.
-   *  @param offset  The offset into `source` from which to match.
-   *  @return        The offset to be used for the next parser.
-   */
-  protected def handleWhiteSpace(source: java.lang.CharSequence, offset: Int): Int =
-    if (skipWhitespace)
-      (whiteSpace findPrefixMatchOf (new SubSequence(source, offset))) match {
-        case Some(matched) => offset + matched.end
-        case None => offset
-      }
-    else
-      offset
+  override type Input = CharOffsetReader
 
   /** A parser that matches a literal string */
   implicit def literal(s: String): Parser[String] = new Parser[String] {
-    def parse(in: Input) = {
-      val source = in.source
-      val offset = in.offset
-      val start = handleWhiteSpace(source, offset)
+    override def parse(in: Input) = {
+      var reader = in
       var i = 0
-      var j = start
-      while (i < s.length && j < source.length && s.charAt(i) == source.charAt(j)) {
+      while (i < s.length && !(reader.atEnd) && s.charAt(i) == reader.first) {
         i += 1
-        j += 1
+        reader = reader.rest
       }
       if (i == s.length)
-        Success(source.subSequence(start, j).toString, in.drop(j - offset), None)
-      else  {
-        val found = if (start == source.length()) "end of source" else "'"+source.charAt(start)+"'"
-        Failure("'"+s+"' expected but "+found+" found", in.drop(start - offset))
+        Success(in.subSequence(i).toString, reader, None)
+      else {
+        val found = if (reader.atEnd) "end of source" else "'"+reader.first+"'"
+        Failure("'"+s+"' expected but "+found+" found", in)
       }
     }
   }
 
   /** A parser that matches a regex string */
   implicit def regex(r: Regex): Parser[String] = new Parser[String] {
-    def parse(in: Input) = {
-      val source = in.source
-      val offset = in.offset
-      val start = handleWhiteSpace(source, offset)
-      (r findPrefixMatchOf (new SubSequence(source, start))) match {
+    override def parse(in: Input) = {
+      (r findPrefixMatchOf in.subSequence) match {
         case Some(matched) =>
-          Success(source.subSequence(start, start + matched.end).toString,
-                  in.drop(start + matched.end - offset),
+          Success(in.subSequence(matched.end).toString,
+                  in.drop(matched.end),
                   None)
         case None =>
-          val found = if (start == source.length()) "end of source" else "'"+source.charAt(start)+"'"
-          Failure("string matching regex '"+r+"' expected but "+found+" found", in.drop(start - offset))
+          val found = if (in.atEnd) "end of source" else "'"+in.first+"'"
+          // TODO should this advance? The original code seems to just drop whitespace
+          Failure("string matching regex '"+r+"' expected but "+found+" found", in)
       }
     }
   }
@@ -131,20 +106,9 @@ trait RegexParsers extends Parsers {
   override def positioned[T <: Positional](p: => Parser[T]): Parser[T] = {
     val pp = super.positioned(p)
     new Parser[T] {
-      def parse(in: Input) = {
-        val offset = in.offset
-        val start = handleWhiteSpace(in.source, offset)
-        pp(in.drop (start - offset))
+      override def parse(in: Input) = {
+        pp(in)
       }
-    }
-  }
-
-  // we might want to make it public/protected in a future version
-  private def ws[T](p: Parser[T]): Parser[T] = new Parser[T] {
-    def parse(in: Input) = {
-      val offset = in.offset
-      val start = handleWhiteSpace(in.source, offset)
-      p(in.drop (start - offset))
     }
   }
 
@@ -153,7 +117,7 @@ trait RegexParsers extends Parsers {
     *
     * This parser additionally skips whitespace if `skipWhitespace` returns true.
     */
-  override def err(msg: String) = ws(super.err(msg))
+  override def err(msg: String) = super.err(msg)
 
   /**
    * A parser generator delimiting whole phrases (i.e. programs).

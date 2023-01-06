@@ -81,9 +81,6 @@ trait PackratParsers extends Parsers {
     //a stack that keeps a list of all involved rules
     private[PackratParsers] var lrStack: List[LR] = Nil
 
-    override def source: java.lang.CharSequence = underlying.source
-    override def offset: Int = underlying.offset
-
     def first: T = underlying.first
     def rest: Reader[T] = new PackratReader(underlying.rest) {
       override private[PackratParsers] val cache = outer.cache
