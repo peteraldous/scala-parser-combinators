@@ -20,6 +20,15 @@ import scala.language.implicitConversions
 
 // TODO: better error handling (labelling like parsec's <?>)
 
+/** An enumeration of operator associativity values: `Left`, `Right`, and
+ *  `Non`.
+ */
+object Associativity extends Enumeration {
+  type Associativity = Value
+
+  val Left, Right, Non = Value
+}
+
 /** `Parsers` is a component that ''provides'' generic parser combinators.
  *
  *  There are two abstract members that must be defined in order to
@@ -223,7 +232,7 @@ trait Parsers {
         case s @ Success(result, rest) =>
           val failure = selectLastFailure(Some(this), s.lastFailure)
           Success(result, rest, failure)
-        case ns: NoSuccess => if (alt.next.pos < next.pos) this else alt
+        case _: NoSuccess => if (alt.next.pos < next.pos) this else alt
       }
     }
   }
@@ -316,7 +325,7 @@ trait Parsers {
      * @return a `Parser` that -- on success -- returns the result of `q`.
      */
     def ~> [U](q: => Parser[U]): Parser[U] = { lazy val p = q // lazy argument
-      (for(a <- this; b <- p) yield b).named("~>")
+      (for(_ <- this; b <- p) yield b).named("~>")
     }
 
     /** A parser combinator for sequential composition which keeps only the left result.
@@ -330,7 +339,7 @@ trait Parsers {
      * @return a `Parser` that -- on success -- returns the result of `p`.
      */
     def <~ [U](q: => Parser[U]): Parser[T] = { lazy val p = q // lazy argument
-      (for(a <- this; b <- p) yield a).named("<~")
+      (for(a <- this; _ <- p) yield a).named("<~")
     }
 
     /**
@@ -372,7 +381,7 @@ trait Parsers {
      *         The resulting parser fails if either `p` or `q` fails, this failure is fatal.
      */
     def ~>! [U](q: => Parser[U]): Parser[U] = { lazy val p = q // lazy argument
-      OnceParser { (for(a <- this; b <- commit(p)) yield b).named("~>!") }
+      OnceParser { (for(_ <- this; b <- commit(p)) yield b).named("~>!") }
     }
 
     /** A parser combinator for non-back-tracking sequential composition which only keeps the left result.
@@ -385,7 +394,7 @@ trait Parsers {
      *         The resulting parser fails if either `p` or `q` fails, this failure is fatal.
      */
     def <~! [U](q: => Parser[U]): Parser[T] = { lazy val p = q // lazy argument
-      OnceParser { (for(a <- this; b <- commit(p)) yield a).named("<~!") }
+      OnceParser { (for(a <- this; _ <- commit(p)) yield a).named("<~!") }
     }
 
 
@@ -448,7 +457,7 @@ trait Parsers {
      */
     def ^^^ [U](v: => U): Parser[U] =  new Parser[U] {
       lazy val v0 = v // lazy argument
-      def apply(in: Input) = Parser.this(in) map (x => v0)
+      def apply(in: Input) = Parser.this(in) map (_ => v0)
     }.named(toString+"^^^")
 
     /** A parser combinator for partial function application.
@@ -601,7 +610,7 @@ trait Parsers {
     p(in) match{
       case s @ Success(_, _) => s
       case e @ Error(_, _) => e
-      case f @ Failure(msg, next) => Error(msg, next)
+      case Failure(msg, next) => Error(msg, next)
     }
   }
 
@@ -613,7 +622,7 @@ trait Parsers {
    *  @param  p      A predicate that determines which elements match.
    *  @return
    */
-  def elem(kind: String, p: Elem => Boolean) = acceptIf(p)(inEl => kind+" expected")
+  def elem(kind: String, p: Elem => Boolean) = acceptIf(p)(_ => kind + " expected")
 
   /** A parser that matches only the given element `e`.
    *
@@ -995,7 +1004,7 @@ trait Parsers {
    */
   def phrase[T](p: Parser[T]) = new Parser[T] {
     def apply(in: Input) = p(in) match {
-      case s @ Success(out, in1) =>
+      case s @ Success(_, in1) =>
         if (in1.atEnd) s
         else s.lastFailure match {
           case Some(failure) => failure
@@ -1032,9 +1041,100 @@ trait Parsers {
       = OnceParser{ (for(a <- this; b <- commit(p)) yield new ~(a,b)).named("~") }
 
     override def ~> [U](p: => Parser[U]): Parser[U]
-      = OnceParser{ (for(a <- this; b <- commit(p)) yield b).named("~>") }
+      = OnceParser{ (for(_ <- this; b <- commit(p)) yield b).named("~>") }
 
     override def <~ [U](p: => Parser[U]): Parser[T]
-      = OnceParser{ (for(a <- this; b <- commit(p)) yield a).named("<~") }
+      = OnceParser{ (for(a <- this; _ <- commit(p)) yield a).named("<~") }
+  }
+
+  import Associativity._
+
+  /** A parser that respects operator the precedence and associativity
+   *  conventions specified in its constructor.
+   *
+   *  @param primary a parser that matches atomic expressions (the atomicity is
+   *                 from the perspective of binary operators). May include
+   *                 unary operators or parentheses.
+   *  @param binop a parser that matches binary operators.
+   *  @param prec_table a list of tuples, each of which encodes a level of
+   *                    precedence. Precedence is encoded highest to lowest.
+   *                    Each precedence level contains an Associativity value
+   *                    and a list of operators.
+   * @param makeBinop a function that combines two operands and an operator
+   *                  into a new expression. The result must have the same type
+   *                  as the operands because intermediate results become
+   *                  operands to other operators.
+   */
+  class PrecedenceParser[Exp,Op,E <: Exp](primary: Parser[E],
+                                          binop: Parser[Op],
+                                          prec_table: List[(Associativity, List[Op])],
+                                          makeBinop: (Exp, Op, Exp) => Exp) extends Parser[Exp] {
+    private def decodePrecedence: (Map[Op, Int], Map[Op, Associativity]) = {
+      var precedence = Map.empty[Op, Int]
+      var associativity = Map.empty[Op, Associativity]
+      var level = prec_table.length
+      for ((assoc, ops) <- prec_table) {
+        precedence = precedence ++ (for (op <- ops) yield (op, level))
+        associativity = associativity ++ (for (op <- ops) yield (op, assoc))
+        level -= 1
+      }
+      (precedence, associativity)
+    }
+    val (precedence, associativity) = decodePrecedence
+    private class ExpandLeftParser(lhs: Exp, minLevel: Int) extends Parser[Exp] {
+      def apply(input: Input): ParseResult[Exp] = {
+        (binop ~ primary)(input) match {
+          case Success(op ~ rhs, next) if precedence(op) >= minLevel => {
+            new ExpandRightParser(rhs, precedence(op), minLevel)(next) match {
+              case Success(r, nextInput) => new ExpandLeftParser(makeBinop(lhs, op, r), minLevel)(nextInput);
+              case ns => ns // dead code
+            }
+          }
+          case _ => {
+            Success(lhs, input);
+          }
+        }
+      }
+    }
+
+    private class ExpandRightParser(rhs: Exp, currentLevel: Int, minLevel: Int) extends Parser[Exp] {
+      private def nextLevel(nextBinop: Op): Option[Int] = {
+        if (precedence(nextBinop) > currentLevel) {
+          Some(minLevel + 1)
+        } else if (precedence(nextBinop) == currentLevel && associativity(nextBinop) == Associativity.Right) {
+          Some(minLevel)
+        } else {
+          None
+        }
+      }
+      def apply(input: Input): ParseResult[Exp] = {
+        def done: ParseResult[Exp] = Success(rhs, input)
+        binop(input) match {
+          case Success(nextBinop,_) => {
+            nextLevel(nextBinop) match {
+              case Some(level) => {
+                new ExpandLeftParser(rhs, level)(input) match {
+                  case Success(r, next) => new ExpandRightParser(r, currentLevel, minLevel)(next)
+                  case ns => ns // dead code
+                }
+              }
+              case None => done
+            }
+          }
+          case _ => done
+        }
+      }
+    }
+
+    /** Parse an expression.
+     */
+    def apply(input: Input): ParseResult[Exp] = {
+      primary(input) match {
+        case Success(lhs, next) => {
+          new ExpandLeftParser(lhs,0)(next)
+        }
+        case noSuccess => noSuccess
+      }
+    }
   }
 }
