@@ -30,6 +30,38 @@ A number of other parsing libraries for Scala are available -- [see list on Scal
  * A more complicated example, [Building a lexer and parser with Scala's Parser Combinators](https://enear.github.io/2016/03/31/parser-combinators/)
  * "Combinator Parsing", chapter 33 of [_Programming in Scala, Third Edition_](http://www.artima.com/shop/programming_in_scala), shows how to apply this library to e.g. parsing of arithmetic expressions. The second half of the chapter examines how the library is implemented.
 
+### Parsers
+
+*see parsers module for more information*
+
+- a parser takes a `Reader[Elem]` and returns the token and the remaining input.
+- all parsers extend the `Parser` class which has built in methods which allow the construction and use of new parsers
+- primitive parser: a parser only intended to operate on one piece of input and will either accept or reject it
+    - `elem`: parser matching a specific element or the provided predicate `p(e)` is true (alias for `accept` and `acceptIf`)
+    - `accept`: a parser that matches only the provided element (also includes aliases for `acceptMatch` and `acceptSeq`)
+    - `acceptIf`: a parser that accepts any elements for which the predicate yields true
+    - `acceptMatch`: takes a partial function, if the element is defined within the domain of the partial function, the function is applied to produce this parser's result
+    - `acceptSeq`: a parser that must match each element in the list in order
+    - `failure`, `err`, `success`: each create parsers that always yield the same result
+- Parser Combinators: take 2 parsers as input (usually as a method) and define a new parser
+    - parsers all support `flatMap`, `map`, `filter`, `withFilter`, and `append` which operate the way you'd expect them to and allow you to use them in `for` statements
+    - `~`: sequential composition. Match the first, then match the second
+    - `~>`: sequential composition keeping only the right result
+    - `<~`: sequential composition keeping only the left result
+    - `-`: exception. First must succeed and second must fail
+    - `~!`: non-back-tracking sequential composition
+    - `~>!`: non-back-tracking sequential composition keeping only right result
+    - `<~!`: non-back-tracking sequential composition keeping only left result
+    - `|`: alternative composition. Only tries second if first fails
+    - `|||`: alternative composition with longest match. Tries both, takes longest match
+    - `^^`: function application
+    - `^^^`: changes successful result into the specified value
+    - `^?`: partial function application
+    - `>>`, `into`: parameterize a subsequent parser with the result of this one. Use when parser depends on result of previous one
+    - `*`: zero or more repetitions
+    - `+`: one or more repetitions
+    - `?`: optional parser
+
 ## Adding an sbt dependency
 
 To depend on scala-parser-combinators in sbt, add something like this to your build.sbt:
