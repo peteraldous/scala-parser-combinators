@@ -14,6 +14,7 @@ package scala
 package util.parsing.combinator
 
 import scala.util.parsing.input._
+import scala.util.{Either,Left,Right}
 import scala.collection.mutable.ListBuffer
 import scala.annotation.tailrec
 import scala.language.implicitConversions
@@ -1047,8 +1048,6 @@ trait Parsers {
       = OnceParser{ (for(a <- this; _ <- commit(p)) yield a).named("<~") }
   }
 
-  import Associativity._
-
   /** A parser that respects operator the precedence and associativity
    *  conventions specified in its constructor.
    *
@@ -1067,62 +1066,65 @@ trait Parsers {
    */
   class PrecedenceParser[Exp,Op,E <: Exp](primary: Parser[E],
                                           binop: Parser[Op],
-                                          prec_table: List[(Associativity, List[Op])],
+                                          prec_table: List[(Associativity.Associativity, List[Op])],
                                           makeBinop: (Exp, Op, Exp) => Exp) extends Parser[Exp] {
-    private def decodePrecedence: (Map[Op, Int], Map[Op, Associativity]) = {
-      var precedence = Map.empty[Op, Int]
-      var associativity = Map.empty[Op, Associativity]
-      var level = prec_table.length
-      for ((assoc, ops) <- prec_table) {
-        precedence = precedence ++ (for (op <- ops) yield (op, level))
-        associativity = associativity ++ (for (op <- ops) yield (op, assoc))
-        level -= 1
-      }
-      (precedence, associativity)
+    val empty = Map.empty[Op, (Int, Associativity.Associativity)];
+    val opData = prec_table.reverse.zipWithIndex.foldLeft(empty)({
+      (map, data) =>
+        val ((assoc, ops), index) = data;
+        val bindings = for (op <- ops) yield (op, (index+1, assoc));
+        map ++ bindings
+    })
+    def precedence(op: Op): Int = {
+      val (level, _) = opData(op);
+      level
     }
-    val (precedence, associativity) = decodePrecedence
-    private class ExpandLeftParser(lhs: Exp, minLevel: Int) extends Parser[Exp] {
-      def apply(input: Input): ParseResult[Exp] = {
-        (binop ~ primary)(input) match {
-          case Success(op ~ rhs, next) if precedence(op) >= minLevel => {
-            new ExpandRightParser(rhs, precedence(op), minLevel)(next) match {
-              case Success(r, nextInput) => new ExpandLeftParser(makeBinop(lhs, op, r), minLevel)(nextInput);
-              case ns => ns // dead code
+
+    type Expansion = Either[Success[Exp], Success[Exp]];
+
+    private def expandRight(rhs: Exp, input: Reader[Elem], current: Int): Expansion = {
+      binop(input) match {
+        case Success(op, _) => {
+          val nextLevel = opData(op) match {
+            case (l, _) if l > current => Some(current + 1)
+            case (l, Associativity.Right) if l == current => Some(current)
+            case _ => None
+          };
+          nextLevel match {
+            case Some(nl) => {
+              expandLeft(rhs, input, nl) match {
+                case Right(Success(r, rnext)) => expandRight(r, rnext, current)
+                case result => result
+              }
             }
-          }
-          case _ => {
-            Success(lhs, input);
+            case None => Right(Success(rhs, input))
           }
         }
+        case _ => Left(Success(rhs, input))
       }
     }
 
-    private class ExpandRightParser(rhs: Exp, currentLevel: Int, minLevel: Int) extends Parser[Exp] {
-      private def nextLevel(nextBinop: Op): Option[Int] = {
-        if (precedence(nextBinop) > currentLevel) {
-          Some(minLevel + 1)
-        } else if (precedence(nextBinop) == currentLevel && associativity(nextBinop) == Associativity.Right) {
-          Some(minLevel)
-        } else {
-          None
-        }
-      }
-      def apply(input: Input): ParseResult[Exp] = {
-        def done: ParseResult[Exp] = Success(rhs, input)
-        binop(input) match {
-          case Success(nextBinop,_) => {
-            nextLevel(nextBinop) match {
-              case Some(level) => {
-                new ExpandLeftParser(rhs, level)(input) match {
-                  case Success(r, next) => new ExpandRightParser(r, currentLevel, minLevel)(next)
-                  case ns => ns // dead code
+    private def expandLeft(lhs: Exp, input: Reader[Elem], minLevel: Int): Expansion = {
+      binop(input) match {
+        case Success(op, binInput) => {
+          val prec = precedence(op);
+          if (prec >= minLevel) {
+            primary(binInput) match {
+              case Success(rhs, next) => {
+                expandRight(rhs, next, prec) match {
+                  case Right(Success(r, rnext)) => {
+                    expandLeft(makeBinop(lhs, op, r), rnext, minLevel)
+                  }
+                  case Left(Success(r, rnext)) => Left(Success(makeBinop(lhs, op, r), rnext))
                 }
               }
-              case None => done
+              case _ => Left(Success(lhs, input))
             }
+          } else {
+            Left(Success(lhs, input))
           }
-          case _ => done
         }
+        case _ => Left(Success(lhs, input))
       }
     }
 
@@ -1131,7 +1133,10 @@ trait Parsers {
     def apply(input: Input): ParseResult[Exp] = {
       primary(input) match {
         case Success(lhs, next) => {
-          new ExpandLeftParser(lhs,0)(next)
+          expandLeft(lhs, next, 0) match {
+            case Left(result) => result
+            case Right(result) => result
+          }
         }
         case noSuccess => noSuccess
       }

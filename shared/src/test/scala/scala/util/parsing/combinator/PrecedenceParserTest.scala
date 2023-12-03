@@ -9,7 +9,8 @@ import scala.util.parsing.input.StreamReader
 
 class PrecedenceParsersTest {
 
-  abstract class Op
+  trait Token
+  abstract class Op extends Token
   object Plus extends Op {
     override def toString = "+"
   }
@@ -26,7 +27,7 @@ class PrecedenceParsersTest {
     override def toString = "="
   }
 
-  abstract class Node
+  abstract class Node extends Token
   case class Leaf(v: Int) extends Node {
     override def toString = v.toString
   }
@@ -41,19 +42,42 @@ class PrecedenceParsersTest {
       (Associativity.Right, List(Equals)))
     def integer: Parser[Leaf] = "[0-9]+".r ^^ { (s: String) => Leaf(s.toInt) }
     def binop: Parser[Op] = "+" ^^^ Plus | "-" ^^^ Minus | "*" ^^^ Mult | "/" ^^^ Divide | "=" ^^^ Equals
+    def token: Parser[Token] = integer | binop
     def expression = new PrecedenceParser(integer, binop, prec, Binop.apply)
   }
 
-  def testExp(expected: Node, input: String): Unit = {
+  def checkEnd(next: ArithmeticParser.Input, end: List[Token]): Unit = {
+    end match {
+      case head :: rest => {
+        ArithmeticParser.token(next) match {
+          case ArithmeticParser.Success(token, scanner) => {
+            assertEquals(token, head);
+            checkEnd(scanner, rest);
+          }
+          case ns => fail(s"Expected to match $end but got $ns")
+        }
+      }
+      case _ => assertTrue(next.atEnd)
+    }
+  }
+
+  def testExp(expected: Node, input: String, end: List[Token] = List.empty): Unit = {
     ArithmeticParser.expression(StreamReader(new StringReader(input))) match {
       case ArithmeticParser.Success(r, next) => {
         assertEquals(expected, r);
-        assertTrue(next.atEnd);
+        checkEnd(next, end);
       }
       case e => {
         fail(s"Error parsing $input: $e");
       }
     }
+  }
+
+  @Test
+  def testGracefulEnd(): Unit = {
+    testExp(Leaf(4), "4 +", List[Token](Plus));
+    testExp(Binop(Leaf(1), Plus, Leaf(2)), "1 + 2 *", List[Token](Mult));
+    testExp(Binop(Leaf(1), Plus, Binop(Leaf(2), Mult, Leaf(3))), "1 + 2 * 3 -", List[Token](Minus));
   }
 
   @Test
