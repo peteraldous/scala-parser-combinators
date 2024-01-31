@@ -1113,7 +1113,10 @@ trait Parsers {
               case Success(rhs, next) => {
                 expandRight(rhs, next, prec) match {
                   case Right(Success(r, rnext)) => {
-                    expandLeft(makeBinop(lhs, op, r), rnext, minLevel)
+                    expandLeft(makeBinop(lhs, op, r), rnext, minLevel) match {
+                      case Left(s: Success[Exp]) => Right(s)
+                      case result => result
+                    }
                   }
                   case Left(Success(r, rnext)) => Left(Success(makeBinop(lhs, op, r), rnext))
                 }

@@ -99,5 +99,6 @@ class PrecedenceParsersTest {
     testExp(Binop(Leaf(3), Plus, Binop(Leaf(9), Divide, Leaf(11))), "3 + 9 / 11")
     testExp(Binop(Binop(Leaf(6), Plus, Leaf(8)), Equals, Leaf(1)), "6 + 8 = 1")
     testExp(Binop(Leaf(4), Equals, Binop(Leaf(5), Minus, Leaf(3))), "4 = 5 - 3")
+    testExp(Binop(Binop(Leaf(1), Minus, Binop(Leaf(2), Mult, Leaf(3))), Plus, Leaf(4)), "1 - 2 * 3 + 4")
   }
 }
